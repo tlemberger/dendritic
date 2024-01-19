@@ -1,0 +1,78 @@
+version: '3'
+
+services:
+  dendritic:
+    build:
+      context: .
+      args:
+        TARGETARCH: amd
+      dockerfile: 'compose/python/Dockerfile'
+    image: dendritic
+    # depends_on:  # seems problematic with tensorboard
+    # - tensorboard
+    # - celery
+  
+    deploy: &gpus
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    # env_file:
+    # - ./.env
+    volumes: &volumes
+    - ./src:/app/src
+    - ./tests:/app/tests
+    - ./pretrained:/pretrained
+    - ./data:/data
+    - ./data/xml:/data/xml
+    - ./data/text:/data/text
+    - ./data/json:/data/json
+    - ./log:/log
+    - ./notebooks:/app/notebooks
+    - vs_server:/root/.vscode-server
+    - cache:/root/.cache  # general cache
+    - dataset_cache:/dataset_cache  # this is a separate cache for huggingface datasets; set in config.datest_cache
+    - runs:/runs  # this is for tensorboard
+    working_dir: /app
+    ports:
+      - 8888:8888   # this allows to run jupyter notebook on --port=8888
+    command: ["jupyter-lab", "--port=8888", "--ip=0.0.0.0", "--allow-root", "--allow_origin='*'", "--NotebookApp.allow_origin='*'"]
+
+  tensorboard:
+    # build:
+    #   context: .
+    #   dockerfile: 'compose/python/Dockerfile-mac'
+    image: dendritic
+    # deploy: *gpus
+    ports:
+    - 6007:6007
+    volumes:
+    - runs:/runs
+    working_dir: /app
+    command: tensorboard --logdir /runs --port 6007 --bind_all
+
+  celery:
+    image: dendritic
+    depends_on:
+    - rabbitmq
+    # env_file:
+    # - ./.env
+    volumes: *volumes
+    working_dir: /app
+    command: celery --app=src.training worker --loglevel=info --purge
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    working_dir: /app
+    ports:
+      # The standard AMQP protocol port
+      - '5672:5672'
+      # HTTP management UI at http://localhost:15672/ with guest guest
+      - '15672:15672'
+
+
+volumes:
+  vs_server:
+  cache:
+  dataset_cache:
+  runs:
