@@ -1,4 +1,5 @@
-FROM nvcr.io/nvidia/pytorch:22.01-py3 AS  build-image
+FROM nvcr.io/nvidia/pytorch:23.12-py3 AS build-image
+# FROM nvcr.io/nvidia/pytorch:22.01-py3 AS build-image
 # FROM python:3.8-buster as build-image
 # FROM arm64v8/python:3.8 as build-image
 # FROM python:3.10 AS compile-image-amd64
@@ -6,6 +7,7 @@ FROM nvcr.io/nvidia/pytorch:22.01-py3 AS  build-image
 # ARG TARGETARCH
 # FROM compile-image AS build-image
 
+RUN apt-get update -y &&  DEBIAN_FRONTEND=noninteractive apt-get install -y python3.10-venv
 RUN python -m venv /opt/venv
 # Make sure we use the virtualenv:
 ENV PATH="/opt/venv/bin:$PATH"
