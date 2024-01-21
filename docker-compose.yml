@@ -51,26 +51,6 @@ services:
     working_dir: /app
     command: tensorboard --logdir /runs --port 6007 --bind_all
 
-  celery:
-    image: dendritic
-    depends_on:
-    - rabbitmq
-    # env_file:
-    # - ./.env
-    volumes: *volumes
-    working_dir: /app
-    command: celery --app=src.training worker --loglevel=info --purge
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    working_dir: /app
-    ports:
-      # The standard AMQP protocol port
-      - '5672:5672'
-      # HTTP management UI at http://localhost:15672/ with guest guest
-      - '15672:15672'
-
-
 volumes:
   vs_server:
   cache:
