@@ -94,8 +94,11 @@ class DendriticFullyConnected(Linear):
     def forward(self, inputs: Tensor) -> Tensor:
         assert inputs.size(-1) == self.in_features, f"input has wrong number of in_features (dimension -1) (found {inputs.size(-1)} instead of required {self.in_features})"
         # input is typically a matrix of inputs, structured into batches of arrays of input features
-        # with dimension B_atch x in_F_eatures (B x in_F)
-        # output will be B_atch xout_F_eatures (B x out_F)
+        # with dimension B_atch x L_ength x in_F_eatures (B x L x in_F)
+        # output will be B_atch x L_ength x out_F_eatures (B x L x out_F)
+        # it could have more dimensions, so to simplify we flatten all dimensions except the last two
+        original_shape = inputs.size()
+        inputs = inputs.view(-1, self.in_features)  # --> ... x in_F, noted B x in_F in the following
 
         # The state is the linear weighted sum of inputs (the result of the classical linear fully connected layer)
         state = F.linear(inputs, self.weight, bias=self.bias)  # (inputs @ self.weight.T) + self.bias --> B x out_F
@@ -130,11 +133,14 @@ class DendriticFullyConnected(Linear):
         assert state_expanded.size() == cluster.size()
         assert state_expanded.size(-1) == self.post_dim
         assert state_expanded.size(1) == self.out_features
-        assert state_expanded.size(0) == inputs.size(0)
+        assert state_expanded.size(0) == inputs.size(0), f"state_expanded has wrong number of batches (dimension 0) (found {state_expanded.size(0)} instead of required {inputs.size(0)}; full dims are {state_expanded.size()})"
         cluster_activity = self.cluster_act_fn(cluster + state_expanded)  # --> B x out_F x in_F-n
 
         # sum cluster activity over the synapsis i.e. over remaining in_F dimension (contracted given convolution)
         cluster_activity = cluster_activity.sum(-1)  # --> B x out_F
+        
+        # reshape back to original shape
+        output = cluster_activity.view(original_shape[:-1] + (self.out_features,))
 
         # output is cluster activity
-        return cluster_activity, state  # --> ... x out_F
+        return output  # --> ... x out_F

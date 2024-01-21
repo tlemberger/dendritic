@@ -27,7 +27,7 @@ setup(
         # to save images from plotly
         "kaleido",
         # "scipy==1.10.1",
-        # "scikit-learn==1.3.0",
+        "scikit-learn==1.3.0",
         "tqdm==4.65.0",
     ],
 )
