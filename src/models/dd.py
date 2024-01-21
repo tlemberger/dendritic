@@ -79,6 +79,7 @@ class DendriticFullyConnected(Linear):
         # self.reset_parameters()
         self.cluster_act_fn = Sigmoid()  # Tanh()  # Hill(n=2.0, k=0.01)  # Hill function instead of Tanh or Sigmoid?
         self.conv_filter = conv_filter.to(**factory_kwargs)  # conv filter is out_channels x in_channels x kernel
+        self.conv_filter.requires_grad = False
         self.stride = stride
         self.kernel_size = self.conv_filter.size(-1)
         self.padding = 0   #  to simplify for now
