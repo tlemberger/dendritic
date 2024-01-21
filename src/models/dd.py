@@ -60,9 +60,12 @@ class DendriticFullyConnected(Linear):
         bias: bool = True,
         conv_filter: Tensor = torch.tensor([[[0.5, 0.5]]]),
         stride: int = 1,
+        device=None,
+        dtype=None,
         **kwargs
     ):
-        super().__init__(in_features, out_features, bias, **kwargs)     
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        super().__init__(in_features, out_features, bias, **factory_kwargs, **kwargs)     
         # just for info, the below is in the parent class constructor
         # factory_kwargs = {'device': device, 'dtype': dtype}
         # super().__init__()
@@ -75,7 +78,7 @@ class DendriticFullyConnected(Linear):
         #     self.register_parameter('bias', None)
         # self.reset_parameters()
         self.cluster_act_fn = Sigmoid()  # Tanh()  # Hill(n=2.0, k=0.01)  # Hill function instead of Tanh or Sigmoid?
-        self.conv_filter = conv_filter  # conv filter is out_channels x in_channels x kernel
+        self.conv_filter = conv_filter.to(**factory_kwargs)  # conv filter is out_channels x in_channels x kernel
         self.stride = stride
         self.kernel_size = self.conv_filter.size(-1)
         self.padding = 0   #  to simplify for now
@@ -92,6 +95,10 @@ class DendriticFullyConnected(Linear):
         self.post_dim = post_dim
 
     def forward(self, inputs: Tensor) -> Tensor:
+         # convolution filter weights have to be same devive and dtype as inputs
+        self.conv_filter = self.conv_filter.to(inputs.device, inputs.dtype)
+        assert inputs.device == self.conv_filter.device, f"inputs and conv_filter have different devices (found {inputs.device} and {self.conv_filter.device} respectively)"
+        assert inputs.dtype == self.conv_filter.dtype, f"inputs and conv_filter have different dtypes (found {inputs.dtype} and {self.conv_filter.dtype} respectively)"
         assert inputs.size(-1) == self.in_features, f"input has wrong number of in_features (dimension -1) (found {inputs.size(-1)} instead of required {self.in_features})"
         # input is typically a matrix of inputs, structured into batches of arrays of input features
         # with dimension B_atch x L_ength x in_F_eatures (B x L x in_F)
