@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor
-from torch.nn import Sigmoid, Linear
+from torch.nn import Sigmoid, Linear, Tanh, ReLU
 from torch.nn import functional as F
 
 
@@ -60,6 +60,8 @@ class DendriticFullyConnected(Linear):
         bias: bool = True,
         conv_filter: Tensor = torch.tensor([[[0.5, 0.5]]]),
         stride: int = 1,
+        syn_act_fn=lambda x: x,  # identity
+        cluster_act_fn=Tanh(),
         device=None,
         dtype=None,
         **kwargs
@@ -77,7 +79,8 @@ class DendriticFullyConnected(Linear):
         # else:
         #     self.register_parameter('bias', None)
         # self.reset_parameters()
-        self.cluster_act_fn = Sigmoid()  # Tanh()  # Hill(n=2.0, k=0.01)  # Hill function instead of Tanh or Sigmoid?
+        self.syn_act_fn = syn_act_fn  # Tanh()  # Hill(n=2.0, k=0.01)  # Hill function instead of Tanh or Sigmoid?
+        self.cluster_act_fn = cluster_act_fn  #  Sigmoid()  # Tanh()  # Hill(n=2.0, k=0.01)  # Hill function instead of Tanh or Sigmoid?
         self.conv_filter = conv_filter.to(**factory_kwargs)  # conv filter is out_channels x in_channels x kernel
         self.conv_filter.requires_grad = False
         self.stride = stride
@@ -94,6 +97,7 @@ class DendriticFullyConnected(Linear):
         #     maxpool_output_width = 1
         # post_dim = maxpool_output_width
         self.post_dim = post_dim
+        self.reset_parameters()
 
     def forward(self, inputs: Tensor) -> Tensor:
          # convolution filter weights have to be same devive and dtype as inputs
@@ -119,8 +123,8 @@ class DendriticFullyConnected(Linear):
         # It requires a bit of tensor gymnastics with broadcasting rules (thank you CoPilot):
         # inputs need to be reshaped to B x 1 x in_F and weights to 1 x out_F x in_F
         x = inputs.view(-1, 1, self.in_features)  # --> B x 1 x in_F
-        w = self.weight.unsqueeze(0)  # --> 1 x out_F x in_F
-        synapses = torch.mul(x, w)  # element-wise multiplication --> B x out_F x in_F
+        self.weight.unsqueeze(0)  # --> 1 x out_F x in_F
+        synapses = self.syn_act_fn(torch.mul(x, self.weight)) # element-wise multiplication --> B x out_F x in_F
         # note that we could use this to compute state = synapses.sum(-1)  # --> ... x out_F but F.linear is so fast, no need
 
         # To scan adjacent synapses along the in_Feature axis
@@ -146,7 +150,7 @@ class DendriticFullyConnected(Linear):
 
         # sum cluster activity over the synapsis i.e. over remaining in_F dimension (contracted given convolution)
         cluster_activity = cluster_activity.sum(-1)  # --> B x out_F
-        
+
         # reshape back to original shape
         output = cluster_activity.view(original_shape[:-1] + (self.out_features,))
 

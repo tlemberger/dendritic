@@ -291,7 +291,7 @@ class RobertaSelfAttention(nn.Module):
 class RobertaSelfOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = dd.DendriticFullyConnected(config.hidden_size, config.hidden_size)
+        self.dense = dd.DendriticFullyConnected(config.hidden_size, config.hidden_size, conv_filter=CONV_FILTER)
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -351,12 +351,13 @@ class RobertaAttention(nn.Module):
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
 
+CONV_FILTER = conv_filter = torch.tensor([[[0.1] * 10]])
 
 # Copied from transformers.models.bert.modeling_bert.BertIntermediate
 class RobertaIntermediate(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = dd.DendriticFullyConnected(config.hidden_size, config.intermediate_size)
+        self.dense = dd.DendriticFullyConnected(config.hidden_size, config.intermediate_size, conv_filter=CONV_FILTER)
         if isinstance(config.hidden_act, str):
             self.intermediate_act_fn = ACT2FN[config.hidden_act]
         else:
@@ -372,7 +373,7 @@ class RobertaIntermediate(nn.Module):
 class RobertaOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
+        self.dense = dd.DendriticFullyConnected(config.intermediate_size, config.hidden_size, conv_filter=CONV_FILTER)
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
