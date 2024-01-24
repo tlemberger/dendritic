@@ -35,7 +35,7 @@ services:
     - runs:/runs  # this is for tensorboard
     working_dir: /app
     ports:
-      - 8888:8888   # this allows to run jupyter notebook on --port=8888
+      - 8885:8888  # this allows to run jupyter notebook on --port=8888
     command: ["jupyter-lab", "--port=8888", "--ip=0.0.0.0", "--allow-root", "--allow_origin='*'", "--NotebookApp.allow_origin='*'"]
 
   tensorboard:
