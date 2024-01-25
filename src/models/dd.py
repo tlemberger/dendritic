@@ -100,7 +100,7 @@ class DendriticFullyConnected(Linear):
         self.reset_parameters()
 
     def forward(self, inputs: Tensor) -> Tensor:
-         # convolution filter weights have to be same devive and dtype as inputs
+        # convolution filter weights have to be same device and dtype as inputs
         self.conv_filter = self.conv_filter.to(inputs.device, inputs.dtype)
         assert inputs.device == self.conv_filter.device, f"inputs and conv_filter have different devices (found {inputs.device} and {self.conv_filter.device} respectively)"
         assert inputs.dtype == self.conv_filter.dtype, f"inputs and conv_filter have different dtypes (found {inputs.dtype} and {self.conv_filter.dtype} respectively)"
@@ -108,7 +108,7 @@ class DendriticFullyConnected(Linear):
         # input is typically a matrix of inputs, structured into batches of arrays of input features
         # with dimension B_atch x L_ength x in_F_eatures (B x L x in_F)
         # output will be B_atch x L_ength x out_F_eatures (B x L x out_F)
-        # it could have more dimensions, so to simplify we flatten all dimensions except the last two
+        # it could have more dimensions, so to simplify we flatten all dimensions except the last one
         original_shape = inputs.size()
         inputs = inputs.view(-1, self.in_features)  # --> ... x in_F, noted B x in_F in the following
 
