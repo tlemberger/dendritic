@@ -351,8 +351,11 @@ class RobertaAttention(nn.Module):
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
 
-CONV_FILTER = conv_filter = torch.tensor([[[0.3] * 3]])
+
+# for DendriticFullyConnected
+CONV_FILTER = conv_filter = torch.tensor([[[0.2] * 5]])
 STRIDE = 3
+
 
 # Copied from transformers.models.bert.modeling_bert.BertIntermediate
 class RobertaIntermediate(nn.Module):
