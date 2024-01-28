@@ -23,7 +23,7 @@ class Hill():
             k_a: half saturation
     """
 
-    def __init__(self, n: int, k_a: float):
+    def __init__(self, n: float, k_a: float):
         self.n = n
         self.k_a = k_a
 
@@ -127,14 +127,14 @@ class DendriticFullyConnected(Module):
         # input is typically a matrix of inputs, structured into batches of arrays of input features
         # with dimension B_atch x L_ength x in_F_eatures (B x L x in_F)
         # output will be B_atch x L_ength x out_F_eatures (B x L x out_F)
-        # it could have more dimensions, noted as B x ... x in_F
+        # it could have more dimensions, but first one is batch B
         original_shape = inputs.size()
 
         # The state is the classical weighted sum of inputs
         # As an approximation, only non NMDA contribute to the state
         # threshoold state to be maximum zero so that ic cannot contribut to positive output
         # nmda cluster activity needed to obtain positive outputs
-        state = F.sigmoid(self.non_nmda(inputs)) - 1.0  # --> ... x out_F
+        state = F.sigmoid(self.non_nmda(inputs)) - 1.0  # --> B x L x out_F
         assert all((state <= 0).view(-1)), f"state has positive values (found max {state.max()})"
         assert state.size() == (original_shape[:-1] + (self.out_features,)), f"state has wrong shape (found {state.size()} instead of required {(original_shape[:-1] + (self.out_features,))}; full dims are {state.size()})"
 
@@ -160,8 +160,8 @@ class DendriticFullyConnected(Module):
         # assert delta.size() == self.nmda.weight.size(), f"delta has wrong shape (found {delta.size()} instead of required {self.nmda.weight.size()})"
         # self.nmda.weight.data = self.nmda.weight.data - (delta / self.nmda.weight.size(1))
 
-        x = inputs.view(-1, self.in_features).unsqueeze(1)  # --> ... x 1 x in_F
-        nmda_syn = torch.mul(x,  self.nmda.weight) # element-wise multiplication --> ... x out_F x in_F
+        x = inputs.view(-1, 1, self.in_features)  # --> B*L x 1 x in_F
+        nmda_syn = torch.mul(x,  self.nmda.weight) # element-wise multiplication --> B*L x out_F x in_F
         assert nmda_syn.size() == (x.size(0), self.out_features, self.in_features), f"synapses has wrong shape (found {synapses.size()} instead of required {(x.size(0), self.out_features, self.in_features)}; full dims are {synapses.size()})"
 
         # To scan adjacent synapses along the in_Feature axis
@@ -170,20 +170,22 @@ class DendriticFullyConnected(Module):
         # and W is the dimension along which the convolution is applied.
         # In our case the convolution dimension W has to correspond to the in_F dimension
         # as we apply the convolution along the synaptic inputs for each neuron
-        nmda_syn = nmda_syn.view(-1, 1, self.in_features)  # --> ...*out_F x 1 x in_F
-        cluster = F.conv1d(nmda_syn, self.conv_filter, stride=self.stride)  # B*out_F x in_F-n
+        nmda_syn = nmda_syn.view(-1, 1, self.in_features)  # --> B*L*out_F x 1 x in_F
+        cluster = F.conv1d(nmda_syn, self.conv_filter, stride=self.stride)  # B*L*out_F x 1 x in_F-n
         # cluster = self.conv_filter(nmda_syn).squeeze(1)  # B*out_F x 1 x in_F-n
-        cluster = cluster.view(-1, self.out_features, cluster.size(-1))  # --> B x out_F x in_F-n
-        # clusters can only be activating (positive) or not (zero)
-        cluster_activity = self.cluster_act_fn(F.relu(cluster).sum(-1), state)  # --> B x out_F x in_F-n
+        cluster = cluster.view(-1, self.out_features, cluster.size(-1))  # --> B*L x out_F x in_F-n
+        cluster_activity = cluster.sum(-1)  # --> B*L x out_F
+        cluster_activity = cluster_activity.view(original_shape[:-1] + (self.out_features,))  # --> B x L x out_F
+        cluster_activity = F.relu(cluster_activity) # clusters can only be activating (positive) or zero
+        # cooperativeity gated by the state of each out neuron
+        # state is  B x L x out_F too
+        cluster_activity = self.cluster_act_fn(cluster_activity, state)  # --> B x L x out_F
+        
+        output = cluster_activity + state
 
-        # reshape back to original shape
-        output = cluster_activity.view(original_shape[:-1] + (self.out_features,))
-
-        # output is cluster activity on top of state
         assert output.size(-1) == self.out_features, f"output has wrong number of out_features (dimension -1) (found {output.size(-1)} instead of required {self.out_features})"
         assert output.size(0) == inputs.size(0)
-        return output + state  # --> ... x out_F
+        return output  # --> B x L x out_F
 
     # see nn.Linear.reset_parameters()
     def reset_parameters(self) -> None:
@@ -208,15 +210,15 @@ if __name__ == "__main__":
     print(dendritic)
 
     # create a random input tensor of size 32 x 10
-    inputs = torch.randn(2, 5)
+    inputs = torch.randn(10, 2, 5)
     print(inputs.size())
 
     # profile timimng
     with torch.autograd.profiler.profile(use_cuda=False) as prof:
-        outputs = dendritic(inputs)
+        output = dendritic(inputs)
     print(prof)
 
-    print(outputs.size())
+    print(output.size())
 
-    assert outputs.size() == (2, 3), f"output has wrong shape (found {output.size()} instead of required (32, 3))"
+    assert output.size() == (10, 2, 3), f"output has wrong shape (found {output.size()} instead of required (32, 3))"
     print("Success!")
