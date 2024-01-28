@@ -291,7 +291,7 @@ class RobertaSelfAttention(nn.Module):
 class RobertaSelfOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = dd.DendriticFullyConnected(config.hidden_size, config.hidden_size, conv_filter=CONV_FILTER)
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -358,10 +358,26 @@ STRIDE = 3
 
 
 # Copied from transformers.models.bert.modeling_bert.BertIntermediate
-class RobertaIntermediate(nn.Module):
+class DendRobertaIntermediate(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = dd.DendriticFullyConnected(config.hidden_size, config.intermediate_size, conv_filter=CONV_FILTER, stride=STRIDE)
+        # if isinstance(config.hidden_act, str):
+        #     self.intermediate_act_fn = ACT2FN[config.hidden_act]
+        # else:
+        #     self.intermediate_act_fn = config.hidden_act
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        hidden_states = self.dense(hidden_states)
+        # hidden_states = self.intermediate_act_fn(hidden_states)
+        return hidden_states
+
+
+# Copied from transformers.models.bert.modeling_bert.BertIntermediate
+class RobertaIntermediate(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
         if isinstance(config.hidden_act, str):
             self.intermediate_act_fn = ACT2FN[config.hidden_act]
         else:
@@ -377,7 +393,7 @@ class RobertaIntermediate(nn.Module):
 class RobertaOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = dd.DendriticFullyConnected(config.intermediate_size, config.hidden_size, conv_filter=CONV_FILTER, stride=STRIDE)
+        self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -401,7 +417,7 @@ class RobertaLayer(nn.Module):
             if not self.is_decoder:
                 raise ValueError(f"{self} should be used as a decoder model if cross attention is added")
             self.crossattention = RobertaAttention(config, position_embedding_type="absolute")
-        self.intermediate = RobertaIntermediate(config)
+        self.intermediate = DendRobertaIntermediate(config)
         self.output = RobertaOutput(config)
 
     def forward(
