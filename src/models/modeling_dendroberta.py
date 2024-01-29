@@ -355,13 +355,14 @@ class RobertaAttention(nn.Module):
 # for DendriticFullyConnected
 CONV_FILTER = conv_filter = torch.tensor([[[0.2] * 5]])
 STRIDE = 3
+CLUSTERING_FRAC = 0.1
 
 
 # Copied from transformers.models.bert.modeling_bert.BertIntermediate
 class DendRobertaIntermediate(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = dd.DendriticFullyConnected(config.hidden_size, config.intermediate_size, conv_filter=CONV_FILTER, stride=STRIDE)
+        self.dense = dd.DendriticFullyConnected(config.hidden_size, config.intermediate_size, conv_filter=CONV_FILTER, stride=STRIDE, clustering_frac=CLUSTERING_FRAC)
         # if isinstance(config.hidden_act, str):
         #     self.intermediate_act_fn = ACT2FN[config.hidden_act]
         # else:
@@ -386,6 +387,21 @@ class RobertaIntermediate(nn.Module):
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states = self.dense(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
+        return hidden_states
+
+
+# Copied from transformers.models.bert.modeling_bert.BertOutput
+class DendRobertaOutput(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.dense = dd.DendriticFullyConnected(config.intermediate_size, config.hidden_size, conv_filter=CONV_FILTER, stride=STRIDE, clustering_frac=CLUSTERING_FRAC)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def forward(self, hidden_states: torch.Tensor, input_tensor: torch.Tensor) -> torch.Tensor:
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
 
@@ -417,8 +433,8 @@ class RobertaLayer(nn.Module):
             if not self.is_decoder:
                 raise ValueError(f"{self} should be used as a decoder model if cross attention is added")
             self.crossattention = RobertaAttention(config, position_embedding_type="absolute")
-        self.intermediate = DendRobertaIntermediate(config)
-        self.output = RobertaOutput(config)
+        self.intermediate = RobertaIntermediate(config)
+        self.output = DendRobertaOutput(config)
 
     def forward(
         self,
