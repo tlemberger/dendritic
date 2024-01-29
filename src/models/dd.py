@@ -110,18 +110,6 @@ class DendriticFullyConnected(Module):
         self.conv_filter = conv_filter  # conv filter is out_channels x in_channels x kernel
         self.stride = stride
         self.kernel_size = self.conv_filter.size(-1)
-        self.padding = 0  # to simplify for now
-        conv_output_width = (self.in_features - self.kernel_size + 2 * self.padding) // self.stride + 1
-        post_dim = conv_output_width
-        # using same stride, kernel size and pooling for max pool as for conv to simplify
-        # if conv_output_width >= self.kernel_size:
-        #     self.max_pool_kernel_size = self.kernel_size
-        #     maxpool_output_width = ((conv_output_width - self.kernel_size + 2 * self.padding) // self.stride) + 1
-        # else:
-        #     self.max_pool_kernel_size = conv_output_width
-        #     maxpool_output_width = 1
-        # post_dim = maxpool_output_width
-        self.post_dim = post_dim
         self.reset_parameters()
 
     def forward(self, inputs: Tensor) -> Tensor:
