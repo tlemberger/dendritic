@@ -130,6 +130,21 @@ class DendriticFullyConnected(Module):
         # it could have more dimensions, but first one is batch B
         original_shape = inputs.size()
 
+        # nmda synapses should be more rare than non-nmda synapses
+        # constraints on the nmda and non-nmda weights
+        # Clamping weights to the range [-1, 1]
+        # self.non_nmda.weight.data = torch.clamp(self.non_nmda.weight.data, -1, 1)
+        # nmda_weight = self.nmda.weight.data
+        # nmda_weight = torch.clamp(nmda_weight, -1, 1)
+        # sum_nmda = nmda_weight.sum(dim=1)
+        # max_nmda = max(1, nmda_weight.size(1) / 100)  # at least 1 synapse per neuron otherwise 1% of synapses
+        # # make sure that sum_nmda is smaller or equal to max_nmda
+        # delta = F.relu(sum_nmda - max_nmda)  # if sum_ndma is smaller than max_nmda, delta is 0  --> out_F
+        # delta = delta.unsqueeze(-1).repeat(1, self.in_features)  # --> out_F x in_F
+        # assert delta.size() == self.nmda.weight.size(), f"delta has wrong shape (found {delta.size()} instead of required {self.nmda.weight.size()})"
+        # nmda_weight = nmda_weight - (delta / nmda_weight.size(1))
+        # self.nmda.weight.data = nmda_weight
+
         # The state is the classical weighted sum of inputs
         # As an approximation, only non NMDA contribute to the state
         # threshoold state to be maximum zero so that ic cannot contribut to positive output
@@ -145,21 +160,6 @@ class DendriticFullyConnected(Module):
         # This will have dimension ... x out_F x in_F
         # It requires a bit of tensor gymnastics with broadcasting rules (thank you CoPilot):
         # inputs need to be reshaped to B x 1 x in_F and weights to 1 x out_F x in_F
-
-        # nmda synapses should be more rare than non-nmda synapses
-
-        # constraints on the nmda and non-nmda weights
-        # Clamping weights to the range [-1, 1]
-        # self.non_nmda.weight.data = torch.clamp(self.non_nmda.weight.data, -1, 1)
-        # self.nmda.weight.data = torch.clamp(self.nmda.weight.data, -1, 1)
-        # sum_nmda = self.nmda.weight.data.sum(dim=1)
-        # max_nmda = max(1, self.nmda.weight.size(1) / 100)  # at least 1 synapse per neuron otherwise 1% of synapses
-        # # make sure that sum_nmda is smaller or equal to max_nmda
-        # delta = F.relu(sum_nmda - max_nmda)  # if sum_ndma is smaller than max_nmda, delta is 0  --> out_F
-        # delta = delta.unsqueeze(-1).repeat(1, self.in_features)  # --> out_F x in_F
-        # assert delta.size() == self.nmda.weight.size(), f"delta has wrong shape (found {delta.size()} instead of required {self.nmda.weight.size()})"
-        # self.nmda.weight.data = self.nmda.weight.data - (delta / self.nmda.weight.size(1))
-
         x = inputs.view(-1, 1, self.in_features)  # --> B*L x 1 x in_F
         nmda_syn = torch.mul(x,  self.nmda.weight) # element-wise multiplication --> B*L x out_F x in_F
         assert nmda_syn.size() == (x.size(0), self.out_features, self.in_features), f"synapses has wrong shape (found {synapses.size()} instead of required {(x.size(0), self.out_features, self.in_features)}; full dims are {synapses.size()})"
@@ -172,7 +172,6 @@ class DendriticFullyConnected(Module):
         # as we apply the convolution along the synaptic inputs for each neuron
         nmda_syn = nmda_syn.view(-1, 1, self.in_features)  # --> B*L*out_F x 1 x in_F
         cluster = F.conv1d(nmda_syn, self.conv_filter, stride=self.stride)  # B*L*out_F x 1 x in_F-n
-        # cluster = self.conv_filter(nmda_syn).squeeze(1)  # B*out_F x 1 x in_F-n
         cluster = cluster.view(-1, self.out_features, cluster.size(-1))  # --> B*L x out_F x in_F-n
         cluster_activity = cluster.sum(-1)  # --> B*L x out_F
         cluster_activity = cluster_activity.view(original_shape[:-1] + (self.out_features,))  # --> B x L x out_F
@@ -180,7 +179,7 @@ class DendriticFullyConnected(Module):
         # cooperativeity gated by the state of each out neuron
         # state is  B x L x out_F too
         cluster_activity = self.cluster_act_fn(cluster_activity, state)  # --> B x L x out_F
-        
+
         output = cluster_activity + state
 
         assert output.size(-1) == self.out_features, f"output has wrong number of out_features (dimension -1) (found {output.size(-1)} instead of required {self.out_features})"
