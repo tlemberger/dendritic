@@ -82,6 +82,7 @@ class DendriticFullyConnected(Module):
         in_features: int,
         out_features: int,
         bias: bool = True,
+        clustering_frac: float = 0.1,
         conv_filter: Tensor = None,
         stride: int = 1,
         cluster_act_fn=Hill(2, 0.5),
@@ -94,9 +95,14 @@ class DendriticFullyConnected(Module):
 
         self.in_features = in_features
         self.out_features = out_features
+        self.clustering_frac = clustering_frac
         self.bias = bias
-        self.nmda = Linear(self.in_features, self.out_features, bias=self.bias, **factory_kwargs)
-        self.non_nmda = Linear(self.in_features, self.out_features, bias=self.bias, **factory_kwargs)
+        assert 0 < self.clustering_frac < 1, f"clustering_frac should be between 0 and 1 (found {self.clustering_frac})"
+        assert self.in_features > 1 / self.clustering_frac, f"clustering_frac is too large (found {self.clustering_frac} for {self.in_features} in_features)"
+        self.in_features_clustering = int(self.in_features * self.clustering_frac)
+        self.in_features_non_clustering = self.in_features - self.in_features_clustering
+        self.nmda = Linear(self.in_features_clustering, self.out_features, bias=self.bias, **factory_kwargs)
+        self.non_nmda = Linear(self.in_features_non_clustering, self.out_features, bias=self.bias, **factory_kwargs)
 
         self.cluster_act_fn = cluster_act_fn  #  Sigmoid()  # Tanh()  # Hill(n=2.0, k=0.01)  # Hill function instead of Tanh or Sigmoid?
         conv_filter = conv_filter if conv_filter is not None else DEFAULT_CONV_FILTER
@@ -130,6 +136,10 @@ class DendriticFullyConnected(Module):
         # it could have more dimensions, but first one is batch B
         original_shape = inputs.size()
 
+        # split the input into nmda vs non nmda inputs
+        nmda_inputs = inputs[..., :self.in_features_clustering]  # --> B x L x in_F_c
+        non_nmda_inputs = inputs[..., self.in_features_clustering:]  # --> B x L x in_F_nc
+
         # nmda synapses should be more rare than non-nmda synapses
         # constraints on the nmda and non-nmda weights
         # Clamping weights to the range [-1, 1]
@@ -149,7 +159,7 @@ class DendriticFullyConnected(Module):
         # As an approximation, only non NMDA contribute to the state
         # threshoold state to be maximum zero so that ic cannot contribut to positive output
         # nmda cluster activity needed to obtain positive outputs
-        state = F.sigmoid(self.non_nmda(inputs)) - 1.0  # --> B x L x out_F
+        state = F.sigmoid(self.non_nmda(non_nmda_inputs)) - 1.0  # --> B x L x out_F
         assert all((state <= 0).view(-1)), f"state has positive values (found max {state.max()})"
         assert state.size() == (original_shape[:-1] + (self.out_features,)), f"state has wrong shape (found {state.size()} instead of required {(original_shape[:-1] + (self.out_features,))}; full dims are {state.size()})"
 
@@ -160,9 +170,9 @@ class DendriticFullyConnected(Module):
         # This will have dimension ... x out_F x in_F
         # It requires a bit of tensor gymnastics with broadcasting rules (thank you CoPilot):
         # inputs need to be reshaped to B x 1 x in_F and weights to 1 x out_F x in_F
-        x = inputs.view(-1, 1, self.in_features)  # --> B*L x 1 x in_F
-        nmda_syn = torch.mul(x,  self.nmda.weight) # element-wise multiplication --> B*L x out_F x in_F
-        assert nmda_syn.size() == (x.size(0), self.out_features, self.in_features), f"synapses has wrong shape (found {synapses.size()} instead of required {(x.size(0), self.out_features, self.in_features)}; full dims are {synapses.size()})"
+        nmda_inputs = nmda_inputs.view(-1, 1, self.in_features_clustering)  # --> B*L x 1 x in_F_c
+        nmda_syn = torch.mul(nmda_inputs,  self.nmda.weight) # element-wise multiplication --> B*L x out_F x in_F_c
+        assert nmda_syn.size() == (nmda_inputs.size(0), self.out_features, self.in_features_clustering), f"synapses has wrong shape (found {synapses.size()} instead of required {(x.size(0), self.out_features, self.in_features)}; full dims are {synapses.size()})"
 
         # To scan adjacent synapses along the in_Feature axis
         # we use a fixed convolution filter to aggregate across neighboring synapses
@@ -170,9 +180,9 @@ class DendriticFullyConnected(Module):
         # and W is the dimension along which the convolution is applied.
         # In our case the convolution dimension W has to correspond to the in_F dimension
         # as we apply the convolution along the synaptic inputs for each neuron
-        nmda_syn = nmda_syn.view(-1, 1, self.in_features)  # --> B*L*out_F x 1 x in_F
-        cluster = F.conv1d(nmda_syn, self.conv_filter, stride=self.stride)  # B*L*out_F x 1 x in_F-n
-        cluster = cluster.view(-1, self.out_features, cluster.size(-1))  # --> B*L x out_F x in_F-n
+        nmda_syn = nmda_syn.view(-1, 1, self.in_features_clustering)  # --> B*L*out_F x 1 x in_Fc
+        cluster = F.conv1d(nmda_syn, self.conv_filter, stride=self.stride)  # B*L*out_F x 1 x in_Fc-n
+        cluster = cluster.view(-1, self.out_features, cluster.size(-1))  # --> B*L x out_F x in_Fc-n
         cluster_activity = cluster.sum(-1)  # --> B*L x out_F
         cluster_activity = cluster_activity.view(original_shape[:-1] + (self.out_features,))  # --> B x L x out_F
         cluster_activity = F.relu(cluster_activity) # clusters can only be activating (positive) or zero
@@ -199,9 +209,10 @@ if __name__ == "__main__":
 
     # create a dendritic layer with 2 synaptic channels, 10 inputs and 3 outputs
     dendritic = DendriticFullyConnected(
-        in_features=5,
+        in_features=15,
         out_features=3,
         bias=True,
+        clustering_frac=0.2,
         conv_filter=torch.tensor([[[0.5] * 3]]),
         stride=1,
         cluster_act_fn=Hill(2, 0.1),
@@ -209,7 +220,7 @@ if __name__ == "__main__":
     print(dendritic)
 
     # create a random input tensor of size 32 x 10
-    inputs = torch.randn(10, 2, 5)
+    inputs = torch.randn(10, 2, 15)
     print(inputs.size())
 
     # profile timimng
