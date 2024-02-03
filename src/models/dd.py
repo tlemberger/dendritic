@@ -27,10 +27,10 @@ class Hill():
         self.n = n
         self.k_a = k_a
 
-    def __call__(self, x: torch.Tensor, state: torch.Tensor):
-        n_modif = self.n + state  # n-1..n since state is -1..0
-        k_d = self.k_a ** n_modif
-        y = hill_fn(x, n_modif, k_d)
+    def __call__(self, x: torch.Tensor):
+        # n_modif = self.n * (1+state)  # 1..n*2 since state is -1..0
+        k_d = self.k_a ** self.n  # * n_modif
+        y = hill_fn(x, n, k_d)
         return y
 
 
@@ -40,21 +40,21 @@ class MyRELU():
         pass
 
     def __call__(self, x: torch.Tensor, state: torch.Tensor):
-        return F.relu(x) * (1 + state) 
+        return F.relu(x) * (1 + state)
 
 
 # conv filter is out_channels x in_channels x kernel
 DEFAULT_CONV_FILTER = torch.tensor(
     [
         [
-            [0.5] * 2
+            [1.0] * 2
         ]
     ]
 )
 
 
 class DendriticFullyConnected(Module):
-    """Dendritic Fully Connected Layer. This extends the classical Linear layer to 
+    """Dendritic Fully Connected Layer. This extends the classical Linear layer to
     include a 'clustering' mechanism. Groups adjascent synapses through a convolution
     with a fixed filter. The 'state' of the neuron is the usual weighted sum of inputs.
     The result of the convolution is added to the state and passed
@@ -110,6 +110,18 @@ class DendriticFullyConnected(Module):
         self.conv_filter = conv_filter  # conv filter is out_channels x in_channels x kernel
         self.stride = stride
         self.kernel_size = self.conv_filter.size(-1)
+        self.padding = 0  # to simplify for now
+        conv_output_width = (self.in_features - self.kernel_size + 2 * self.padding) // self.stride + 1
+        post_dim = conv_output_width
+        # using same stride, kernel size and pooling for max pool as for conv to simplify
+        # if conv_output_width >= self.kernel_size:
+        #     self.max_pool_kernel_size = self.kernel_size
+        #     maxpool_output_width = ((conv_output_width - self.kernel_size + 2 * self.padding) // self.stride) + 1
+        # else:
+        #     self.max_pool_kernel_size = conv_output_width
+        #     maxpool_output_width = 1
+        # post_dim = maxpool_output_width
+        self.post_dim = post_dim
         self.reset_parameters()
 
     def forward(self, inputs: Tensor) -> Tensor:
@@ -121,10 +133,10 @@ class DendriticFullyConnected(Module):
         # input is typically a matrix of inputs, structured into batches of arrays of input features
         # with dimension B_atch x L_ength x in_F_eatures (B x L x in_F)
         # output will be B_atch x L_ength x out_F_eatures (B x L x out_F)
-        # it could have more dimensions, but first one is batch B
+        # it could have more dimensions, but first one is batch B and last one is in_F
         original_shape = inputs.size()
 
-        # split the input into nmda vs non nmda inputs
+        # split the input into nmda (clustering) vs non nmda (non-clustering) inputs
         nmda_inputs = inputs[..., :self.in_features_clustering]  # --> B x L x in_F_c
         non_nmda_inputs = inputs[..., self.in_features_clustering:]  # --> B x L x in_F_nc
 
@@ -169,16 +181,18 @@ class DendriticFullyConnected(Module):
         # In our case the convolution dimension W has to correspond to the in_F dimension
         # as we apply the convolution along the synaptic inputs for each neuron
         nmda_syn = nmda_syn.view(-1, 1, self.in_features_clustering)  # --> B*L*out_F x 1 x in_Fc
+        # we apply the convolution filter (out_channels x in_channels x kernel_size)
+        # in our canse out_channels=1 and in_channels=1 
         cluster = F.conv1d(nmda_syn, self.conv_filter, stride=self.stride)  # B*L*out_F x 1 x in_Fc-n
         cluster = cluster.view(-1, self.out_features, cluster.size(-1))  # --> B*L x out_F x in_Fc-n
         cluster_activity = cluster.sum(-1)  # --> B*L x out_F
         cluster_activity = cluster_activity.view(original_shape[:-1] + (self.out_features,))  # --> B x L x out_F
-        cluster_activity = F.relu(cluster_activity) # clusters can only be activating (positive) or zero
-        # cooperativeity gated by the state of each out neuron
-        # state is  B x L x out_F too
-        cluster_activity = self.cluster_act_fn(cluster_activity, state)  # --> B x L x out_F
+        # cluster_activity = F.relu(cluster_activity)  # threshold to only positive, for example with Hill function?
+        # cooperativity and 'gating'?
+        # state is B x L x out_F too
+        cluster_activity = self.cluster_act_fn(cluster_activity + state)  # --> B x L x out_F
 
-        output = cluster_activity + state
+        output = cluster_activity # + state
 
         assert output.size(-1) == self.out_features, f"output has wrong number of out_features (dimension -1) (found {output.size(-1)} instead of required {self.out_features})"
         assert output.size(0) == inputs.size(0)
@@ -192,31 +206,36 @@ class DendriticFullyConnected(Module):
 
 if __name__ == "__main__":
 
+    # profile and check it works
+
     # set deterministic behavior
     torch.manual_seed(0)
 
     # create a dendritic layer with 2 synaptic channels, 10 inputs and 3 outputs
     dendritic = DendriticFullyConnected(
-        in_features=15,
+        in_features=768,
         out_features=3,
         bias=True,
-        clustering_frac=0.2,
-        conv_filter=torch.tensor([[[0.5] * 3]]),
-        stride=1,
-        cluster_act_fn=Hill(2, 0.1),
+        clustering_frac=0.1,
+        conv_filter=torch.tensor([[[1.0] * 5]]),
+        stride=4,
+        cluster_act_fn=Tanh(),
     )
     print(dendritic)
 
     # create a random input tensor of size 32 x 10
-    inputs = torch.randn(10, 2, 15)
+    inputs = torch.randn(50, 10, 768)
     print(inputs.size())
 
-    # profile timimng
-    with torch.autograd.profiler.profile(use_cuda=False) as prof:
+    # profile timing
+    with torch.autograd.profiler.profile(use_cuda=True) as prof:
         output = dendritic(inputs)
-    print(prof)
+    if torch.cuda.is_available():
+        print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    else:
+        print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
 
     print(output.size())
 
-    assert output.size() == (10, 2, 3), f"output has wrong shape (found {output.size()} instead of required (32, 3))"
+    assert output.size() == (50, 10, 3), f"output has wrong shape (found {output.size()})"
     print("Success!")
